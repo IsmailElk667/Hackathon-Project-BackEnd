@@ -12,8 +12,11 @@ export const SLA = {
 
 // Per-team health score (start at 100, subtract penalties, add velocity).
 export const HEALTH_WEIGHTS = {
-  W_SLA_BREACH: 15,     // per escalated (breached) blocker
-  W_BLOCKER: 6,         // per active blocker (any)
+  W_SLA_BREACH: 15,          // per escalated (breached) blocker — breach covers its own penalty
+  // Graduated blocker penalty by SLA state (breach contributes 0 — fully covered by W_SLA_BREACH)
+  W_BLOCKER_OK: 3,           // < 18h — fresh, minor drag
+  W_BLOCKER_APPROACHING: 6,  // 18–24h — heading into the response window
+  W_BLOCKER_WARNING: 9,      // 24–32h — inside SLA window, not yet breached
   W_STALLED_RATIO: 40,  // × (stalled / inFlight)
   W_WIP_AGE: 10,        // × wipAgePenalty(0..1)
   W_VELOCITY: 10,       // ± velocity swing
