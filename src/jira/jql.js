@@ -12,10 +12,13 @@ export function allIssues(boardKey) {
   )
 }
 
-/** Active epics (not Done) — used to get epic names for initiative progress bars. */
-export function activeEpics(boardKey) {
+/**
+ * Active initiative-level work (not Done): Epics (tech delivery) + Experiments
+ * (ops experiments — Shruthi's tech-vs-ops split, by real Jira issue type).
+ */
+export function activeInitiatives(boardKey) {
   return (
-    `project = ${boardKey} AND issuetype = Epic AND ` +
+    `project = ${boardKey} AND issuetype in (Epic, Experiment) AND ` +
     `statusCategory != Done ORDER BY updated DESC`
   )
 }

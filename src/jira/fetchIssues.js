@@ -4,7 +4,7 @@
 import { config } from '../config.js'
 import { log } from '../lib/log.js'
 import { searchAll, resolveCustomFields } from './client.js'
-import { allIssues, activeEpics, epicChildren } from './jql.js'
+import { allIssues, activeInitiatives, epicChildren } from './jql.js'
 import { BOARDS, ALL_CROSS_LABELS } from './boards.js'
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -183,10 +183,16 @@ function buildEpics(epicResults, childResults, flaggedField) {
         !isDone(i) && (isFlagged(i, flaggedField) || getBlockedBy(i))
       ).length
 
+      // Tech-vs-ops separation by real Jira issue type (Shruthi's ask).
+      const issueType = epic.fields.issuetype?.name || 'Epic'
+      const kind = /experiment/i.test(issueType) ? 'ops' : 'tech'
+
       epics.push({
         id:              epic.key,
         teamId:          boardId,
         name:            epic.fields.summary,
+        kind,
+        issueType,
         doneChildren,
         totalChildren:   children.length,
         blockedChildren,
@@ -215,7 +221,7 @@ export async function getJiraIngest() {
       return { board, issues }
     })),
     Promise.all(boards.map(async board => {
-      const epicIssues = await searchAll(activeEpics(board.boardKey))
+      const epicIssues = await searchAll(activeInitiatives(board.boardKey))
       return { boardId: board.id, board, epicIssues }
     })),
   ])

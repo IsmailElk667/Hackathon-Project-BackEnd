@@ -85,6 +85,7 @@ export function buildSnapshot(ingest) {
   const prevTotalShipped = rawTeams.reduce((s, t) => s + (t.shippedPrev ?? t.shipped ?? 0), 0)
   const sprint = computeSprint(teams, infraBlockers, ingest.kpi, prevTotalShipped)
   const ticker = buildTicker(teams, infraBlockers, sprint)
+  const leadership = buildLeadership(initiatives, sprint)
 
   const payload = {
     source: ingest.source || 'mock',
@@ -95,10 +96,50 @@ export function buildSnapshot(ingest) {
     ceremonies,
     lifecycle,
     initiatives,
+    leadership,
     ticker,
   }
   payload.hash = hashPayload(payload)
   return payload
+}
+
+// Company-level rollup over all initiatives — the leadership "health check"
+// every PM asked for. Completion is story-weighted (a 1/39 epic shouldn't count
+// the same as a 1/2 epic), so the headline % reflects real delivered work.
+function buildLeadership(initiatives, sprint) {
+  const total = initiatives.length
+  const byStatus = { onTrack: 0, atRisk: 0, blocked: 0 }
+  const byKind = { tech: 0, ops: 0 }
+  let doneChildren = 0, totalChildren = 0
+
+  for (const i of initiatives) {
+    if (i.status === 'blocked') byStatus.blocked++
+    else if (i.status === 'at-risk') byStatus.atRisk++
+    else byStatus.onTrack++
+    byKind[i.kind === 'ops' ? 'ops' : 'tech']++
+    doneChildren += i.doneChildren || 0
+    totalChildren += i.totalChildren || 0
+  }
+
+  return {
+    totalInitiatives: total,
+    byStatus,
+    byKind,
+    onTrackPct: total ? Math.round((100 * byStatus.onTrack) / total) : 0,
+    completionPct: totalChildren ? Math.round((100 * doneChildren) / totalChildren) : 0,
+    doneChildren,
+    totalChildren,
+    trend: sprint.trend,              // delivery momentum vs last sprint
+    // Strategic metrics the PMs want but Jira can't yet supply — surfaced as
+    // pending so leadership sees the shape and knows what fields to populate.
+    pending: {
+      outcomeHitRate: null,           // needs a "Success Metric" field + post-ship review
+      stakeholderAlignment: null,     // needs a sign-off field/checklist on each epic
+      discoveryToDelivery: null,      // needs Discovery vs Delivery tagging
+      dateCommitted: null,            // needs a business-sign-off date field
+      roi: null,                      // needs $ / business value input
+    },
+  }
 }
 
 // Build the looping ticker feed from live signals.

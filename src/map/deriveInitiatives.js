@@ -27,6 +27,8 @@ export function deriveInitiatives(epics = []) {
         id: e.id,
         teamId: e.teamId,
         name: e.name,
+        kind: e.kind || 'tech',       // 'tech' (Epic) | 'ops' (Experiment)
+        issueType: e.issueType || 'Epic',
         progressPct,
         doneChildren: done,
         totalChildren: total,
