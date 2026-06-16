@@ -50,6 +50,34 @@ function projectPrefix(key = '') {
   return m ? m[1] : ''
 }
 
+// The team's current sprint = the most common active-state sprint across its
+// issues' Sprint field (Jira Cloud returns parsed sprint objects). null if the
+// team runs kanban / has no active sprint.
+function computeActiveSprint(issues, sprintField) {
+  if (!sprintField) return null
+  const tally = {}
+  for (const issue of issues) {
+    const arr = issue.fields[sprintField]
+    if (!Array.isArray(arr)) continue
+    for (const s of arr) {
+      if (s && typeof s === 'object' && s.state === 'active' && s.name) {
+        if (!tally[s.name]) tally[s.name] = { ...s, count: 0 }
+        tally[s.name].count++
+      }
+    }
+  }
+  const top = Object.values(tally).sort((a, b) => b.count - a.count)[0]
+  if (!top) return null
+  return {
+    name: top.name,
+    state: top.state,
+    startDate: top.startDate || null,
+    endDate: top.endDate || null,
+    goal: top.goal || null,
+    issueCount: top.count,
+  }
+}
+
 function mapStatus(statusName = '') {
   const STATUS_MAP = {
     'To Do': 'Backlog', 'Backlog': 'Backlog', 'Open': 'In Dev',
@@ -77,7 +105,7 @@ function statusCategory(issue) {
   return issue.fields.status?.statusCategory?.key || 'indeterminate'
 }
 
-function buildTeam(board, issues, flaggedField) {
+function buildTeam(board, issues, flaggedField, sprintField) {
   const cut14 = CUTOFF_14D(), cut28 = CUTOFF_28D()
   const { boardKey, crossTeamLabels, ...staticMeta } = board
 
@@ -145,6 +173,7 @@ function buildTeam(board, issues, flaggedField) {
     inFlight:    activeIssues.length,
     backlog:     backlogIssues.length,
     stalled:     stalledCount,
+    activeSprint: computeActiveSprint(issues, sprintField),
     blockers,
     inFlightTickets: activeIssues.map(ticketRow),
     backlogTickets:  backlogIssues.map(ticketRow),
@@ -187,6 +216,16 @@ function buildEpics(epicResults, childResults, flaggedField) {
       const issueType = epic.fields.issuetype?.name || 'Epic'
       const kind = /experiment/i.test(issueType) ? 'ops' : 'tech'
 
+      // Compact story list for the drill-down (initiative → stories). Sorted
+      // done-last so open work surfaces first.
+      const stories = children.map(i => ({
+        id:      i.key,
+        title:   i.fields.summary,
+        stage:   mapStatus(i.fields.status?.name),
+        done:    isDone(i),
+        blocked: !isDone(i) && (isFlagged(i, flaggedField) || Boolean(getBlockedBy(i))),
+      })).sort((a, b) => (a.done === b.done ? 0 : a.done ? 1 : -1))
+
       epics.push({
         id:              epic.key,
         teamId:          boardId,
@@ -196,6 +235,7 @@ function buildEpics(epicResults, childResults, flaggedField) {
         doneChildren,
         totalChildren:   children.length,
         blockedChildren,
+        stories,
       })
     }
   }
@@ -206,7 +246,7 @@ function buildEpics(epicResults, childResults, flaggedField) {
 // ─── main export ─────────────────────────────────────────────────────────────
 
 export async function getJiraIngest() {
-  const { flagged: flaggedField } = await resolveCustomFields()
+  const { flagged: flaggedField, sprint: sprintField } = await resolveCustomFields()
 
   // Filter boards to those enabled in config
   const boards = BOARDS.filter(b => config.jira.boards.includes(b.boardKey))
@@ -235,7 +275,7 @@ export async function getJiraIngest() {
     return { boardId, children }
   }))
 
-  const teams = issueResults.map(({ board, issues }) => buildTeam(board, issues, flaggedField))
+  const teams = issueResults.map(({ board, issues }) => buildTeam(board, issues, flaggedField, sprintField))
   const epics = buildEpics(epicResults, childResults, flaggedField)
 
   log.info(`jira: done — ${teams.length} teams, ${epics.length} initiatives`)

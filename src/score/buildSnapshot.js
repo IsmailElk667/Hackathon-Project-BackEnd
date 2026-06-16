@@ -65,6 +65,7 @@ export function buildSnapshot(ingest) {
       health, healthScore: score, healthBreakdown: breakdown,
       shipped: t.shipped, inFlight: t.inFlight, stalled: t.stalled,
       backlog: t.backlog ?? 0,
+      activeSprint: t.activeSprint ?? null,
       effortScore, effortLabel,
       standup: t.standup, sprintPlanning: t.sprintPlanning,
       blockers,

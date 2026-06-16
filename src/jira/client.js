@@ -43,17 +43,18 @@ export async function resolveCustomFields() {
   if (_customFields) return _customFields
 
   const { data } = await getClient().get('/rest/api/3/field')
-  let storyPoints = null, epicLink = null, flagged = null
+  let storyPoints = null, epicLink = null, flagged = null, sprint = null
 
   for (const f of data) {
     const n = (f.name || '').toLowerCase()
     if (!storyPoints && /^story points?$|^sp$|^story point estimate$/.test(n)) storyPoints = f.id
     if (!epicLink   && /^epic link$|^epic name$/.test(n))                        epicLink   = f.id
     if (!flagged    && /^flagged$|^impediment$/.test(n))                         flagged    = f.id
+    if (!sprint     && /^sprint$/.test(n))                                       sprint     = f.id
   }
 
-  _customFields = { storyPoints, epicLink, flagged }
-  log.info(`jira fields resolved: storyPoints=${storyPoints} epicLink=${epicLink} flagged=${flagged}`)
+  _customFields = { storyPoints, epicLink, flagged, sprint }
+  log.info(`jira fields resolved: storyPoints=${storyPoints} epicLink=${epicLink} flagged=${flagged} sprint=${sprint}`)
   return _customFields
 }
 
@@ -71,6 +72,7 @@ export async function searchAll(jql) {
     ...(customFields.storyPoints ? [customFields.storyPoints] : []),
     ...(customFields.epicLink    ? [customFields.epicLink]    : []),
     ...(customFields.flagged     ? [customFields.flagged]     : []),
+    ...(customFields.sprint      ? [customFields.sprint]      : []),
   ]
 
   const all = []

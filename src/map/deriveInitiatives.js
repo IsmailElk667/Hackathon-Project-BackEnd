@@ -34,6 +34,7 @@ export function deriveInitiatives(epics = []) {
         totalChildren: total,
         blockedChildren: blocked,
         status,
+        stories: e.stories || [],     // drill-down: initiative → stories
       }
     })
     // Most-complete first within each team's group.
