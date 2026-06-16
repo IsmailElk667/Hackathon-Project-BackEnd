@@ -7,6 +7,8 @@ import { computeSprint, computeCeremonies } from './sprint.js'
 import { classifySla } from './sla.js'
 import { buildLifecycle } from '../map/deriveLifecycle.js'
 import { deriveInitiatives } from '../map/deriveInitiatives.js'
+import { computeQueueDepth } from './queueDepth.js'
+import { computeCycleTime } from './cycleTime.js'
 
 const avgDays = (tickets = []) => {
   const ds = tickets.map(t => t.days).filter(n => Number.isFinite(n))
@@ -57,6 +59,8 @@ export function buildSnapshot(ingest) {
     const { effortScore, effortLabel } = computeEffort({
       shipped: t.shipped, shippedPrev: t.shippedPrev, inFlight: t.inFlight, stalled: t.stalled,
     })
+    const queueDepth = computeQueueDepth(t.inFlightTickets)
+    const cycleTime = computeCycleTime(t.inFlightTickets, t.shippedTickets)
 
     return {
       id: t.id, name: t.name, shortName: t.shortName, board: t.board, pm: t.pm,
@@ -66,6 +70,7 @@ export function buildSnapshot(ingest) {
       shipped: t.shipped, inFlight: t.inFlight, stalled: t.stalled,
       backlog: t.backlog ?? 0,
       activeSprint: t.activeSprint ?? null,
+      queueDepth, cycleTime,
       effortScore, effortLabel,
       standup: t.standup, sprintPlanning: t.sprintPlanning,
       blockers,

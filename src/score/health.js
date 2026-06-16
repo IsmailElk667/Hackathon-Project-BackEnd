@@ -30,6 +30,12 @@ export function computeHealth(m) {
   const breachCount = blockers.filter(b => b.escalate).length
   const blockerCount = blockers.length
 
+  // Graduated penalty per slaState; breach contributes 0 — already charged via W_SLA_BREACH.
+  const BLOCKER_PENALTY = {
+    ok: W.W_BLOCKER_OK, approaching: W.W_BLOCKER_APPROACHING,
+    warning: W.W_BLOCKER_WARNING, breach: 0,
+  }
+
   const avgWip = m.avgInFlightDays || 0
   const wipAgePenalty = clamp(
     (avgWip - W.WIP_BASELINE_DAYS) / (W.WIP_FULL_DAYS - W.WIP_BASELINE_DAYS), 0, 1
@@ -39,7 +45,7 @@ export function computeHealth(m) {
   const velocityScore = velocityDelta * W.W_VELOCITY
 
   const pSla = W.W_SLA_BREACH * breachCount
-  const pBlk = W.W_BLOCKER * blockerCount
+  const pBlk = blockers.reduce((sum, b) => sum + (BLOCKER_PENALTY[b.slaState] ?? W.W_BLOCKER_OK), 0)
   const pStall = W.W_STALLED_RATIO * stalledRatio
   const pWip = W.W_WIP_AGE * wipAgePenalty
 
@@ -56,6 +62,11 @@ export function computeHealth(m) {
       base: 100,
       sla: -round1(pSla), breaches: breachCount,
       blockers: -round1(pBlk), blockerCount,
+      blockersByState: {
+        ok: blockers.filter(b => b.slaState === 'ok').length,
+        approaching: blockers.filter(b => b.slaState === 'approaching').length,
+        warning: blockers.filter(b => b.slaState === 'warning').length,
+      },
       stalled: -round1(pStall), stalledRatio: round2(stalledRatio),
       wip: -round1(pWip), avgInFlightDays: round1(avgWip),
       velocity: round1(velocityScore), velocityDelta: round2(velocityDelta),
