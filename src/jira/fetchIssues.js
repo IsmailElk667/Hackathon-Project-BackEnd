@@ -86,6 +86,7 @@ function mapStatus(statusName = '') {
     'Ready for QA': 'Ready for QA', 'In QA': 'In QA', 'QA': 'In QA', 'Testing': 'In QA',
     'Awaiting QA': 'Awaiting QA',
     'Ready to Deploy': 'Ready to Deploy', 'Ready for Deploy': 'Ready to Deploy',
+    'Merged to Release': 'Ready to Deploy', 'Waiting On Release': 'Ready to Deploy',
     'Blocked': 'Blocked', 'On Hold': 'Blocked',
     'Analysis': 'Analysis Done', 'Analysis Done': 'Analysis Done',
     'Done': 'Done', 'Resolved': 'Done', 'Closed': 'Done',

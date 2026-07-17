@@ -67,5 +67,6 @@ export const STATUS_ALIASES = {
   'in qa': 6, 'ready for qa': 6, 'awaiting qa': 6, 'qa': 6, 'testing': 6,
   'qa done': 7, 'tested': 7,
   'ready to deploy': 8, 'ready for deploy': 8, 'deploy': 8, 'ready for release': 8,
+  'merged to release': 8, 'waiting on release': 8,
   'done': 9, 'closed': 9, 'resolved': 9, 'shipped': 9,
 }
