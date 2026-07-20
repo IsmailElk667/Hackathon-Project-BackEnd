@@ -71,6 +71,11 @@ export function buildSnapshot(ingest) {
       backlog: t.backlog ?? 0,
       activeSprint: t.activeSprint ?? null,
       queueDepth, cycleTime,
+      // Sprint burn-up time-series (issue count vs time) + 90-day flow cycle
+      // time. The Jira path supplies these from real sprint history; mock/local
+      // falls back to a synthesized series so the chart always renders.
+      burnup: t.burnup ?? synthBurnup(t),
+      flowCycle: t.flowCycle ?? deriveFlowCycle(t),
       effortScore, effortLabel,
       standup: t.standup, sprintPlanning: t.sprintPlanning,
       blockers,
@@ -107,6 +112,37 @@ export function buildSnapshot(ingest) {
   }
   payload.hash = hashPayload(payload)
   return payload
+}
+
+// Synthesize a burn-up series when the source didn't supply one (mock/local).
+// Real Jira ingest provides t.burnup from sprint history; this keeps the chart
+// alive for demos. Shape: { start, end, points:[{ t, scope, done }] } daily.
+function synthBurnup(t) {
+  const total = (t.shipped || 0) + (t.inFlight || 0)
+  const doneTotal = t.shipped || 0
+  if (!total) return null
+  const DAY = 86_400_000, N = 14, todayIdx = 9   // day 9 of a 14-day sprint
+  const now = Date.now()
+  const startMs = now - todayIdx * DAY
+  const points = []
+  for (let i = 0; i <= todayIdx; i++) {
+    const f = i / todayIdx
+    const scope = Math.round(total * (0.72 + 0.28 * Math.min(1, f * 1.6)))
+    const done = Math.round(doneTotal * Math.pow(f, 1.3))
+    points.push({ t: new Date(startMs + i * DAY).toISOString(), scope, done })
+  }
+  return { start: new Date(startMs).toISOString(), end: new Date(startMs + N * DAY).toISOString(), points }
+}
+
+// Fallback 90-day flow cycle time from in-flight ticket ages (mock/local). The
+// Jira path computes the real created→resolved cycle time over the window.
+function deriveFlowCycle(t) {
+  const days = (t.inFlightTickets || []).map(k => Number(k.days) || 0).filter(d => d <= 90)
+  if (!days.length) return null
+  const s = [...days].sort((a, b) => a - b), mid = Math.floor(s.length / 2)
+  const median = s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
+  const r = n => Math.round(n * 10) / 10
+  return { avg: r(days.reduce((a, b) => a + b, 0) / days.length), median: r(median), max: r(s[s.length - 1]), windowDays: 90, sampleSize: days.length }
 }
 
 // Company-level rollup over all initiatives — the leadership "health check"

@@ -69,6 +69,7 @@ function computeActiveSprint(issues, sprintField) {
   const top = Object.values(tally).sort((a, b) => b.count - a.count)[0]
   if (!top) return null
   return {
+    id: top.id ?? null,
     name: top.name,
     state: top.state,
     startDate: top.startDate || null,
@@ -110,20 +111,46 @@ function buildTeam(board, issues, flaggedField, sprintField) {
   const cut14 = CUTOFF_14D(), cut28 = CUTOFF_28D()
   const { boardKey, crossTeamLabels, ...staticMeta } = board
 
+  const activeSprint = computeActiveSprint(issues, sprintField)
+
+  // Flow metrics (WIP / throughput / blockers) are scoped to the team's active
+  // sprint. Kanban teams (no active sprint) stay board-wide with the 14/28-day
+  // resolution windows so the dashboard still reads sensibly.
+  const inSprint = (issue) => {
+    if (!activeSprint || !sprintField) return true
+    const arr = issue.fields[sprintField]
+    return Array.isArray(arr) && arr.some(s => s && typeof s === 'object' &&
+      (s.id === activeSprint.id || s.name === activeSprint.name))
+  }
+  const scoped = issues.filter(inSprint)
+
   const shippedIssues = [], prevIssues = [], activeIssues = [], backlogIssues = []
 
-  for (const issue of issues) {
+  for (const issue of scoped) {
     const cat = statusCategory(issue)
     if (cat === 'done') {
-      const resolvedMs = issue.fields.resolutiondate
-        ? new Date(issue.fields.resolutiondate).getTime() : 0
-      if (resolvedMs >= cut14)       shippedIssues.push(issue)
-      else if (resolvedMs >= cut28)  prevIssues.push(issue)
-      // older than 28d → ignore
+      if (activeSprint) {
+        shippedIssues.push(issue)     // sprint-scoped throughput = all Done in sprint
+      } else {
+        const resolvedMs = issue.fields.resolutiondate
+          ? new Date(issue.fields.resolutiondate).getTime() : 0
+        if (resolvedMs >= cut14)       shippedIssues.push(issue)
+        else if (resolvedMs >= cut28)  prevIssues.push(issue)
+      }
     } else if (cat === 'new') {
       backlogIssues.push(issue)       // not started — backlog
     } else {
       activeIssues.push(issue)        // indeterminate — genuinely in flight
+    }
+  }
+
+  // Velocity trend needs a previous-window count; in sprint mode derive it
+  // board-wide from the 14–28-day resolution window (previous sprint proxy).
+  if (activeSprint) {
+    for (const issue of issues) {
+      if (statusCategory(issue) !== 'done') continue
+      const resolvedMs = issue.fields.resolutiondate ? new Date(issue.fields.resolutiondate).getTime() : 0
+      if (resolvedMs < cut14 && resolvedMs >= cut28) prevIssues.push(issue)
     }
   }
 
@@ -174,7 +201,9 @@ function buildTeam(board, issues, flaggedField, sprintField) {
     inFlight:    activeIssues.length,
     backlog:     backlogIssues.length,
     stalled:     stalledCount,
-    activeSprint: computeActiveSprint(issues, sprintField),
+    activeSprint,
+    flowCycle:   computeFlowCycle(issues),        // 90-day board-wide cycle time
+    burnup:      buildBurnup(scoped, activeSprint), // sprint issue-count history
     blockers,
     inFlightTickets: activeIssues.map(ticketRow),
     backlogTickets:  backlogIssues.map(ticketRow),
@@ -184,6 +213,56 @@ function buildTeam(board, issues, flaggedField, sprintField) {
       day:   i.fields.resolutiondate ? weekday(i.fields.resolutiondate) : '—',
     })),
   }
+}
+
+// 90-day flow cycle time: real created→resolved duration (days) for issues
+// completed within the trailing window. Board-wide (not sprint-scoped) per the
+// PM spec ("cycle time = 90 days"). Returns {avg,median,max,windowDays,sampleSize}.
+function computeFlowCycle(issues) {
+  const now = Date.now(), WINDOW = 90 * 86_400_000
+  const cyc = []
+  for (const i of issues) {
+    if (statusCategory(i) !== 'done') continue
+    const res = i.fields.resolutiondate ? new Date(i.fields.resolutiondate).getTime() : 0
+    const cre = i.fields.created ? new Date(i.fields.created).getTime() : 0
+    if (!res || !cre || res < now - WINDOW) continue
+    const days = (res - cre) / 86_400_000
+    if (days >= 0) cyc.push(days)
+  }
+  if (!cyc.length) return null
+  const s = cyc.sort((a, b) => a - b), mid = Math.floor(s.length / 2)
+  const median = s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
+  const r = n => Math.round(n * 10) / 10
+  return { avg: r(s.reduce((a, b) => a + b, 0) / s.length), median: r(median), max: r(s[s.length - 1]), windowDays: 90, sampleSize: s.length }
+}
+
+// Sprint burn-up history reconstructed from the sprint's real issue dates: an
+// issue enters scope at max(sprintStart, created) and is completed at its
+// resolutiondate. Emits daily { t, scope, done } points from sprint start to
+// today. (Captures adds + completions; mid-sprint scope removals aren't tracked
+// without the changelog — a future enhancement via the Jira sprint report API.)
+function buildBurnup(scopedIssues, sprint) {
+  if (!sprint || !sprint.startDate || !sprint.endDate) return null
+  const startMs = new Date(sprint.startDate).getTime()
+  const endMs = new Date(sprint.endDate).getTime()
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null
+  const DAY = 86_400_000
+  const todayMs = Math.min(Date.now(), endMs)
+  const items = scopedIssues.map(i => ({
+    added: Math.max(startMs, i.fields.created ? new Date(i.fields.created).getTime() : startMs),
+    done: (statusCategory(i) === 'done' && i.fields.resolutiondate) ? new Date(i.fields.resolutiondate).getTime() : null,
+  }))
+  const points = []
+  for (let ms = startMs; ; ms += DAY) {
+    const day = Math.min(ms, todayMs)
+    points.push({
+      t: new Date(day).toISOString(),
+      scope: items.filter(x => x.added <= day).length,
+      done: items.filter(x => x.done != null && x.done <= day).length,
+    })
+    if (day >= todayMs) break
+  }
+  return { start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString(), points }
 }
 
 // ─── epic initiative builder ──────────────────────────────────────────────────
