@@ -59,6 +59,15 @@ export const config = {
     port: num(process.env.PORT, 8787),
     corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5176',
   },
+
+  // Shared-password gate. Set ACCESS_PASSWORD to enable; leave blank to disable
+  // (open). SESSION_SECRET is optional — if omitted, tokens are signed with a
+  // key derived from the password.
+  auth: {
+    password: process.env.ACCESS_PASSWORD || '',
+    secret: process.env.SESSION_SECRET || '',
+    ttlDays: num(process.env.SESSION_TTL_DAYS, 7),
+  },
 }
 
 export function logConfigBanner(log) {
