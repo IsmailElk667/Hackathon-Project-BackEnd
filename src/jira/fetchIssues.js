@@ -3,7 +3,7 @@
 // are never requested, stored, or forwarded to the browser or any LLM.
 import { config } from '../config.js'
 import { log } from '../lib/log.js'
-import { searchAll, resolveCustomFields } from './client.js'
+import { searchAll, resolveCustomFields, getStatusCategoryMap, fetchChangelog } from './client.js'
 import { allIssues, activeInitiatives, epicChildren } from './jql.js'
 import { BOARDS, ALL_CROSS_LABELS } from './boards.js'
 
@@ -202,8 +202,14 @@ function buildTeam(board, issues, flaggedField, sprintField) {
     backlog:     backlogIssues.length,
     stalled:     stalledCount,
     activeSprint,
-    flowCycle:   computeFlowCycle(issues),        // 90-day board-wide cycle time
+    flowCycle:   computeFlowCycle(issues),        // fallback; overridden by AA-style pass
     burnup:      buildBurnup(scoped, activeSprint), // sprint issue-count history
+    // Sprint-completed issues (key + resolved time) for the changelog-based
+    // cycle-time pass in getJiraIngest. Not emitted in the snapshot.
+    cycleItems: activeSprint
+      ? shippedIssues.filter(i => i.fields.resolutiondate)
+          .map(i => ({ key: i.key, resolvedMs: new Date(i.fields.resolutiondate).getTime() }))
+      : [],
     blockers,
     inFlightTickets: activeIssues.map(ticketRow),
     backlogTickets:  backlogIssues.map(ticketRow),
@@ -234,6 +240,42 @@ function computeFlowCycle(issues) {
   const median = s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
   const r = n => Math.round(n * 10) / 10
   return { avg: r(s.reduce((a, b) => a + b, 0) / s.length), median: r(median), max: r(s[s.length - 1]), windowDays: 90, sampleSize: s.length }
+}
+
+// Actionable-Agile-style cycle time from the changelog: elapsed time from the
+// first "in progress" transition to completion, over the active sprint's
+// completed items. AA counts inclusive calendar days (same-day = 1), so we add 1.
+// Falls back silently per-issue; if the whole pass fails the caller keeps the
+// created→resolved fallback already set on the team.
+async function attachSprintCycleTime(teams, catMap) {
+  const DAY = 86_400_000
+  for (const t of teams) {
+    const items = (t.cycleItems || []).slice(0, 60)   // bound work per team
+    delete t.cycleItems
+    if (!items.length) continue
+    const cycles = []
+    for (const { key, resolvedMs } of items) {
+      try {
+        const hist = (await fetchChangelog(key)).sort((a, b) => new Date(a.created) - new Date(b.created))
+        let startMs = null
+        for (const h of hist) {
+          for (const it of h.items || []) {
+            if (it.field === 'status' && catMap[String(it.to)] === 'indeterminate') { startMs = new Date(h.created).getTime(); break }
+          }
+          if (startMs != null) break
+        }
+        if (startMs != null && resolvedMs && resolvedMs >= startMs) {
+          cycles.push(Math.max(1, Math.round((resolvedMs - startMs) / DAY) + 1))
+        }
+      } catch { /* skip this issue, keep going */ }
+    }
+    if (cycles.length) {
+      const s = cycles.sort((a, b) => a - b), mid = Math.floor(s.length / 2)
+      const median = s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2)
+      const r = n => Math.round(n * 10) / 10
+      t.flowCycle = { avg: r(s.reduce((a, b) => a + b, 0) / s.length), median, max: s[s.length - 1], sprint: t.activeSprint?.name || null, sampleSize: s.length, basis: 'actionable-agile' }
+    }
+  }
 }
 
 // Sprint burn-up history reconstructed from the sprint's real issue dates: an
@@ -356,6 +398,16 @@ export async function getJiraIngest() {
   }))
 
   const teams = issueResults.map(({ board, issues }) => buildTeam(board, issues, flaggedField, sprintField))
+
+  // AA-style cycle time from changelog (first in-progress → completion, this
+  // sprint). Best-effort: on failure each team keeps its created→resolved value.
+  try {
+    const catMap = await getStatusCategoryMap()
+    await attachSprintCycleTime(teams, catMap)
+  } catch (err) {
+    log.warn('sprint cycle-time pass skipped:', err.message)
+  }
+
   const epics = buildEpics(epicResults, childResults, flaggedField)
 
   log.info(`jira: done — ${teams.length} teams, ${epics.length} initiatives`)

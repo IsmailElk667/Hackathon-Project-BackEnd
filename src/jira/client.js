@@ -88,3 +88,31 @@ export async function searchAll(jql) {
 
   return all
 }
+
+// Status id → statusCategory key ('new' | 'indeterminate' | 'done'). Cached
+// after the first call. Used to detect the first "in progress" transition when
+// computing changelog-based (Actionable-Agile-style) cycle time.
+let _statusCat = null
+export async function getStatusCategoryMap() {
+  if (_statusCat) return _statusCat
+  const { data } = await getClient().get('/rest/api/3/status')
+  const map = {}
+  for (const s of data) map[String(s.id)] = s.statusCategory?.key || 'indeterminate'
+  _statusCat = map
+  return map
+}
+
+// Fetch a single issue's changelog (status-transition history), paginated.
+// Returns an array of { created, items:[{ field, from, to, ... }] }.
+export async function fetchChangelog(issueKey) {
+  const out = []
+  let startAt = 0
+  for (;;) {
+    const { data } = await getClient().get(`/rest/api/3/issue/${encodeURIComponent(issueKey)}/changelog`, { params: { startAt, maxResults: 100 } })
+    const values = data.values || []
+    out.push(...values)
+    if (data.isLast || !values.length || out.length >= (data.total || 0)) break
+    startAt += values.length
+  }
+  return out
+}
